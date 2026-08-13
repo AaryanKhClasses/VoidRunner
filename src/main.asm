@@ -1,5 +1,6 @@
 global main
 
+extern printf
 extern SDL_Init
 extern SDL_CreateWindow
 extern SDL_DestroyWindow
@@ -12,6 +13,49 @@ extern SDL_RenderFillRect
 extern SDL_RenderPresent
 extern SDL_Delay
 extern SDL_Quit
+
+%macro LOG 1
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push r8
+    push r9
+    push r10
+    push r11
+    lea rdi, [rel %1]
+    call debug_log
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+%endmacro
+
+%macro LOG_INT 2
+    push rax
+    push rcx
+    push rdx
+    push rsi
+    push r8
+    push r9
+    push r10
+    push r11
+    lea rdi, [rel %1]
+    mov esi, %2
+    call debug_log_int
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rax
+%endmacro
 
 section .data
     window_title db "Void Runner", 0
@@ -31,6 +75,14 @@ section .data
 
     WINDOW_WIDTH equ 800
     WINDOW_HEIGHT equ 600
+
+    ; ! debug logging
+    DEBUG_ENABLED equ 1
+    debug_prefix db "[DEBUG] ", 0
+    fmt_debug db "[DEBUG] %s", 10, 0
+    fmt_debug_int db "[DEBUG] %s: %d", 10, 0
+    fmt_debug_hex db "[DEBUG] %s: 0x%08x", 10, 0
+    msg_game_started db "Game started", 0
 
     ; ! walls:
     ; +0    x
@@ -128,6 +180,8 @@ main:
     test rax, rax
     jz .destroy_window
     mov [rbp - 16], rax ; store renderer pointer
+
+    LOG msg_game_started
 
     .game_loop:
 
@@ -647,4 +701,38 @@ enemy_hits_wall:
 
     .no_collision:
         xor eax, eax ; no collision
+        ret
+
+; ! Function: debug_log
+; Logs a debug message to the console.
+; Args:
+;   rdi: pointer to the message string
+debug_log:
+    %if DEBUG_ENABLED
+        push rbp
+        mov rbp, rsp
+        mov rsi, rdi ; message string
+        lea rdi, [rel fmt_debug]
+        xor eax, eax ; no floating point arguments
+        call printf
+        pop rbp
+    %endif
+        ret
+
+; ! Function: debug_log_int
+; Logs a debug message with an integer value to the console.
+; Args:
+;   rdi: pointer to the message string
+;   rsi: integer value
+debug_log_int:
+    %if DEBUG_ENABLED
+        push rbp
+        mov rbp, rsp
+        mov rdx, rsi ; integer value
+        mov rsi, rdi ; message string
+        lea rdi, [rel fmt_debug_int]
+        xor eax, eax ; no floating point arguments
+        call printf
+        pop rbp
+    %endif
         ret
