@@ -60,6 +60,7 @@ extern SDL_Quit
 section .data
     window_title db "Void Runner", 0
 
+    ; ! SDL Constants
     SDL_INIT_VIDEO equ 0x00000020
     SDL_WINDOW_SHOWN equ 0x00000004
     SDL_WINDOWPOS_CENTERED equ 0x2FFF0000
@@ -73,10 +74,13 @@ section .data
     SDLK_s equ 115
     SDLK_d equ 100
 
-    WINDOW_WIDTH equ 800
-    WINDOW_HEIGHT equ 600
+    ; ! Window Dimensions
+    WINDOW_WIDTH equ 1080
+    WINDOW_HEIGHT equ 720
+    HUD_HEIGHT equ 120
+    GAME_HEIGHT equ WINDOW_HEIGHT - HUD_HEIGHT
 
-    ; ! debug logging
+    ; ! Debug Logging
     DEBUG_ENABLED equ 1
     debug_prefix db "[DEBUG] ", 0
     fmt_debug db "[DEBUG] %s", 10, 0
@@ -84,7 +88,7 @@ section .data
     fmt_debug_hex db "[DEBUG] %s: 0x%08x", 10, 0
     msg_game_started db "Game started", 0
 
-    ; ! walls:
+    ; ! Wall Struct:
     ; +0    x
     ; +4    y
     ; +8    w
@@ -95,7 +99,7 @@ section .data
         dd 50, 160, 200, 40
         dd 500, 500, 200, 40
 
-    ; ! enemies
+    ; ! Enemy Struct:
     ; +0    x
     ; +4    y
     ; +8    w
@@ -111,6 +115,15 @@ section .data
         dd 100, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
         dd 650, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
         dd 400, 500, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
+    
+    ; ! Player Properties
+    PLAYER_MAX_HEALTH equ 100
+    PLAYER_DAMAGE equ 10
+    DAMAGE_COOLDOWN equ 500
+
+    ; ! Game State
+    GAME_PLAYING equ 1
+    GAME_OVER equ 0
 
 section .bss
     event resb 56
@@ -119,7 +132,8 @@ section .bss
     player_y resd 1
     player_w resd 1
     player_h resd 1
-    
+    player_health resd 1
+    player_damage_cooldown resd 1
     key_up resb 1
     key_down resb 1
     key_left resb 1
@@ -137,6 +151,8 @@ section .bss
     enemy_rect resd 4
     player_rect resd 4
 
+    game_state resd 1
+
 section .text
 main:
     push rbp
@@ -153,6 +169,9 @@ main:
     mov dword [rel player_y], WINDOW_HEIGHT / 2 - 25
     mov dword [rel player_w], 50
     mov dword [rel player_h], 50
+    mov dword [rel player_health], PLAYER_MAX_HEALTH
+    mov dword [rel player_damage_cooldown], 0
+    mov dword [rel game_state], GAME_PLAYING
 
     ; Initialize SDL
     mov edi, SDL_INIT_VIDEO
@@ -315,9 +334,9 @@ main:
                 mov dword [rel player_y], 0
 
             .check_bottom_boundary:
-                cmp dword [rel player_y], WINDOW_HEIGHT - 50
+                cmp dword [rel player_y], GAME_HEIGHT - 50
                 jle .update_enemies
-                mov dword [rel player_y], WINDOW_HEIGHT - 50
+                mov dword [rel player_y], GAME_HEIGHT - 50
 
         .update_enemies:
             call update_enemies
@@ -346,7 +365,7 @@ main:
         .draw_walls:
             mov ecx, [rel wall_index]
             cmp ecx, wall_count
-            jge .draw_enemies
+            jge .prepare_draw_enemies
             mov eax, ecx
             shl eax, 4
             lea rdx, [rel walls]
@@ -368,13 +387,14 @@ main:
             jmp .draw_walls
 
         ; Draw Enemies
-        mov rdi, [rbp - 16] ; load renderer pointer
-        mov esi, 255 ; red
-        mov edx, 60 ; green
-        mov ecx, 60 ; blue
-        mov r8d, 255 ; alpha
-        call SDL_SetRenderDrawColor
-        mov dword [rel enemy_index], 0 ; reset enemy index
+        .prepare_draw_enemies:
+            mov rdi, [rbp - 16] ; load renderer pointer
+            mov esi, 255 ; red
+            mov edx, 60 ; green
+            mov ecx, 60 ; blue
+            mov r8d, 255 ; alpha
+            call SDL_SetRenderDrawColor
+            mov dword [rel enemy_index], 0 ; reset enemy index
 
         .draw_enemies:
             mov ecx, [rel enemy_index]
@@ -680,7 +700,8 @@ update_enemies:
 enemy_hits_wall:
     mov dword [rel wall_index], 0 ; wall index = 0
     .wall_loop:
-        cmp ecx, [rel wall_index]
+        mov ecx, [rel wall_index]
+        cmp ecx, wall_count
         jge .no_collision
 
         mov eax, ecx
