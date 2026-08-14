@@ -87,6 +87,8 @@ section .data
     fmt_debug_int db "[DEBUG] %s: %d", 10, 0
     fmt_debug_hex db "[DEBUG] %s: 0x%08x", 10, 0
     msg_game_started db "Game started", 0
+    msg_game_over db "Game Over!", 0
+    msg_player_health db "Player Health", 0
 
     ; ! Wall Struct:
     ; +0    x
@@ -273,6 +275,10 @@ main:
                 jmp .poll_events
 
         .update:
+            ; Check if the game is over
+            cmp dword [rel game_state], GAME_OVER
+            je .render
+
             ; Horizontal Movement
             mov eax, [rel player_x]
             cmp byte [rel key_left], 0
@@ -340,6 +346,7 @@ main:
 
         .update_enemies:
             call update_enemies
+            call handle_player_damage
             jmp .render
 
     .render:
@@ -722,6 +729,95 @@ enemy_hits_wall:
 
     .no_collision:
         xor eax, eax ; no collision
+        ret
+
+; ! Function: check_player_enemy_collision
+; Checks if the player collides with any alive enemy
+; Returns:
+;   eax: 1 if collision detected, 0 otherwise
+check_player_enemy_collision:
+    ; Player Rectangle
+    mov eax, [rel player_x]
+    mov [rel player_rect + 0], eax
+    mov eax, [rel player_y]
+    mov [rel player_rect + 4], eax
+    mov eax, [rel player_w]
+    mov [rel player_rect + 8], eax
+    mov eax, [rel player_h]
+    mov [rel player_rect + 12], eax
+    mov dword [rel enemy_index], 0
+
+    .enemy_loop:
+        mov ecx, [rel enemy_index]
+        cmp ecx, enemy_count
+        jge .no_collision
+
+        mov eax, ecx
+        imul eax, ENEMY_SIZE
+        lea rdx, [rel enemies]
+        add rdx, rax
+
+        cmp dword [rdx + 20], 0 ; check if enemy is alive
+        je .next_enemy
+
+        ; Enemy Rectangle
+        mov eax, [rdx + 0]
+        mov [rel enemy_rect + 0], eax
+        mov eax, [rdx + 4]
+        mov [rel enemy_rect + 4], eax
+        mov eax, [rdx + 8]
+        mov [rel enemy_rect + 8], eax
+        mov eax, [rdx + 12]
+        mov [rel enemy_rect + 12], eax
+
+        lea rdi, [rel player_rect]
+        lea rsi, [rel enemy_rect]
+        call rects_overlap
+        test eax, eax
+        jnz .collision
+
+    .next_enemy:
+        inc dword [rel enemy_index]
+        jmp .enemy_loop
+
+    .collision:
+        mov eax, 1 ; collision detected
+        ret
+    .no_collision:
+        xor eax, eax ; no collision
+        ret
+
+; ! Function: handle_player_damage
+; Checks if the player collides with any alive enemy and applies damage if necessary.
+handle_player_damage:
+    cmp dword [rel game_state], GAME_PLAYING ; Check if the game is still playing
+    jne .done
+
+    cmp dword [rel player_damage_cooldown], 0
+    jle .check_collision
+    sub dword [rel player_damage_cooldown], 16
+    cmp dword [rel player_damage_cooldown], 0
+    jg .done
+    mov dword [rel player_damage_cooldown], 0
+
+    .check_collision:
+        call check_player_enemy_collision
+        test eax, eax
+        jz .done
+
+        ; Player takes damage
+        sub dword [rel player_health], PLAYER_DAMAGE
+        mov dword [rel player_damage_cooldown], DAMAGE_COOLDOWN
+
+        LOG_INT msg_player_health, [rel player_health]
+
+        cmp dword [rel player_health], 0
+        jg .done
+        mov dword [rel player_health], 0
+        mov dword [rel game_state], GAME_OVER
+        LOG msg_game_over
+
+    .done:
         ret
 
 ; ! Function: debug_log
