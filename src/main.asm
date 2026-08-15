@@ -79,6 +79,9 @@ section .data
     WINDOW_HEIGHT equ 720
     HUD_HEIGHT equ 120
     GAME_HEIGHT equ WINDOW_HEIGHT - HUD_HEIGHT
+    HUD_PADDING equ 20
+    HEALTH_BAR_WIDTH equ 200
+    HEALTH_BAR_HEIGHT equ 20
 
     ; ! Debug Logging
     DEBUG_ENABLED equ 1
@@ -456,6 +459,9 @@ main:
             lea rsi, [rbp - 32] ; load address of SDL_Rect
             call SDL_RenderFillRect
 
+            mov rdi, [rbp - 16]
+            call draw_hud
+
             ; Present Renderer
             mov rdi, [rbp - 16] ; load renderer pointer
             call SDL_RenderPresent
@@ -818,6 +824,72 @@ handle_player_damage:
         LOG msg_game_over
 
     .done:
+        ret
+
+; ! Function: draw_hud
+; Draws the HUD: Health bar.
+draw_hud:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rbp - 8], rdi ; renderer pointer
+
+    mov rdi, [rbp - 8]
+    mov esi, 30 ; red
+    mov edx, 30 ; green
+    mov ecx, 30 ; blue
+    mov r8d, 255 ; alpha
+    call SDL_SetRenderDrawColor
+
+    mov dword [rbp - 32], 0
+    mov eax, WINDOW_HEIGHT - HUD_HEIGHT
+    mov [rbp - 28], eax
+    mov dword [rbp - 24], WINDOW_WIDTH
+    mov dword [rbp - 20], HUD_HEIGHT
+    mov rdi, [rbp - 8]
+    lea rsi, [rbp - 32]
+    call SDL_RenderFillRect
+
+    ; Health bar background
+    mov rdi, [rbp - 8]
+    mov esi, 80
+    mov edx, 80
+    mov ecx, 80
+    mov r8d, 255
+    call SDL_SetRenderDrawColor
+
+    mov dword [rbp - 32], HUD_PADDING ; x
+    mov eax, WINDOW_HEIGHT - HUD_HEIGHT + HUD_PADDING ; y
+    mov [rbp - 28], eax
+    mov dword [rbp - 24], HEALTH_BAR_WIDTH ; w
+    mov dword [rbp - 20], HEALTH_BAR_HEIGHT ; h
+    mov rdi, [rbp - 8]
+    lea rsi, [rbp - 32]
+    call SDL_RenderFillRect
+
+    ; Current health
+    mov eax, HEALTH_BAR_WIDTH
+    imul eax, [rel player_health]
+    xor edx, edx
+    mov ecx, PLAYER_MAX_HEALTH
+    idiv ecx
+    test eax, eax
+    jz .done
+
+    mov [rbp - 24], eax
+    mov rdi, [rbp - 8]
+    mov esi, 50
+    mov edx, 200
+    mov ecx, 80
+    mov r8d, 255
+    call SDL_SetRenderDrawColor
+    mov rdi, [rbp - 8]
+    lea rsi, [rbp - 32]
+    call SDL_RenderFillRect
+
+    .done:
+        mov rsp, rbp
+        pop rbp
         ret
 
 ; ! Function: debug_log
