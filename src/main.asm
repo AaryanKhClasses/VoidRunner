@@ -73,6 +73,7 @@ section .data
     SDLK_a equ 97
     SDLK_s equ 115
     SDLK_d equ 100
+    SDLK_SPACE equ 32
 
     ; ! Window Dimensions
     WINDOW_WIDTH equ 1080
@@ -130,6 +131,23 @@ section .data
     GAME_PLAYING equ 1
     GAME_OVER equ 0
 
+    ; ! Projectiles Struct:
+    ; +0    x
+    ; +4    y
+    ; +8    w
+    ; +12   h
+    ; +16   velocity_x
+    ; +20   velocity_y
+    ; +24   damage
+    ; +28   alive
+    MAX_PROJECTILES equ 64
+    PROJECTILE_WIDTH equ 8
+    PROJECTILE_HEIGHT equ 8
+    PROJECTILE_SPEED equ 8
+    PROJECTILE_DAMAGE equ 20
+    FIRE_COOLDOWN equ 200
+    PROJECTILE_SIZE equ 32
+
 section .bss
     event resb 56
 
@@ -139,10 +157,13 @@ section .bss
     player_h resd 1
     player_health resd 1
     player_damage_cooldown resd 1
+    player_fire_cooldown resd 1
+    player_direction resd 1 ; 0: up, 1: right, 2: down, 3: left
     key_up resb 1
     key_down resb 1
     key_left resb 1
     key_right resb 1
+    projectiles resb PROJECTILE_SIZE * MAX_PROJECTILES
 
     candidate_x resd 1
     candidate_y resd 1
@@ -151,12 +172,14 @@ section .bss
 
     enemy_index resd 1
     wall_index resd 1
+    projectile_index resd 1
 
     candidate_rect resd 4
     enemy_rect resd 4
     player_rect resd 4
 
     game_state resd 1
+
 
 section .text
 main:
@@ -177,6 +200,8 @@ main:
     mov dword [rel player_health], PLAYER_MAX_HEALTH
     mov dword [rel player_damage_cooldown], 0
     mov dword [rel game_state], GAME_PLAYING
+    mov dword [rel player_fire_cooldown], 0
+    mov dword [rel player_direction], 0
 
     ; Initialize SDL
     mov edi, SDL_INIT_VIDEO
@@ -237,19 +262,28 @@ main:
             je .set_key_left
             cmp eax, SDLK_d
             je .set_key_right
+            cmp eax, SDLK_SPACE
+            je .set_key_space
             jmp .poll_events
 
             .set_key_up:
                 mov byte [rel key_up], 1
+                mov dword [rel player_direction], 0
                 jmp .poll_events
             .set_key_down:
                 mov byte [rel key_down], 1
+                mov dword [rel player_direction], 2
                 jmp .poll_events
             .set_key_left:
                 mov byte [rel key_left], 1
+                mov dword [rel player_direction], 3
                 jmp .poll_events
             .set_key_right:
                 mov byte [rel key_right], 1
+                mov dword [rel player_direction], 1
+                jmp .poll_events
+            .set_key_space:
+                call fire_projectile
                 jmp .poll_events
 
         .key_up:
@@ -262,19 +296,27 @@ main:
             je .clear_key_left
             cmp eax, SDLK_d
             je .clear_key_right
+            cmp eax, SDLK_SPACE
+            je .clear_key_space
             jmp .poll_events
 
             .clear_key_up:
                 mov byte [rel key_up], 0
+                mov dword [rel player_direction], 0
                 jmp .poll_events
             .clear_key_down:
                 mov byte [rel key_down], 0
+                mov dword [rel player_direction], 2
                 jmp .poll_events
             .clear_key_left:
                 mov byte [rel key_left], 0
+                mov dword [rel player_direction], 3
                 jmp .poll_events
             .clear_key_right:
                 mov byte [rel key_right], 0
+                mov dword [rel player_direction], 1
+                jmp .poll_events
+            .clear_key_space:
                 jmp .poll_events
 
         .update:
@@ -344,8 +386,19 @@ main:
 
             .check_bottom_boundary:
                 cmp dword [rel player_y], GAME_HEIGHT - 50
-                jle .update_enemies
+                jle .update_fire_cooldown
                 mov dword [rel player_y], GAME_HEIGHT - 50
+
+        .update_fire_cooldown:
+            cmp dword [rel player_fire_cooldown], 0
+            jle .fire_cooldown_done
+            sub dword [rel player_fire_cooldown], 16
+            cmp dword [rel player_fire_cooldown], 0
+            jg .fire_cooldown_done
+            mov dword [rel player_fire_cooldown], 0
+
+            .fire_cooldown_done:
+                call update_projectiles
 
         .update_enemies:
             call update_enemies
@@ -375,7 +428,7 @@ main:
         .draw_walls:
             mov ecx, [rel wall_index]
             cmp ecx, wall_count
-            jge .prepare_draw_enemies
+            jge .prepare_draw_projectiles
             mov eax, ecx
             shl eax, 4
             lea rdx, [rel walls]
@@ -395,6 +448,45 @@ main:
             call SDL_RenderFillRect
             inc dword [rel wall_index]
             jmp .draw_walls
+
+        ; Draw Projectiles
+        .prepare_draw_projectiles:
+            mov rdi, [rbp - 16]
+            mov esi, 255 ; red
+            mov edx, 220 ; green
+            mov ecx, 80 ; blue
+            mov r8d, 255 ; alpha
+            call SDL_SetRenderDrawColor
+            mov dword [rel projectile_index], 0 ; reset projectile index
+
+        .draw_projectiles:
+            mov ecx, [rel projectile_index]
+            cmp ecx, MAX_PROJECTILES
+            jge .prepare_draw_enemies
+            mov eax, ecx
+            imul eax, PROJECTILE_SIZE
+            lea rdx, [rel projectiles]
+            add rdx, rax
+
+            cmp dword [rdx + 28], 0 ; check if projectile is alive
+            je .draw_next_projectile
+
+            mov eax, [rdx] ; projectile.x
+            mov [rbp - 32], eax ; SDL_Rect.x
+            mov eax, [rdx + 4] ; projectile.y
+            mov [rbp - 28], eax ; SDL_Rect.y
+            mov eax, [rdx + 8] ; projectile.w
+            mov [rbp - 24], eax ; SDL_Rect.w
+            mov eax, [rdx + 12] ; projectile.h
+            mov [rbp - 20], eax ; SDL_Rect.h
+
+            mov rdi, [rbp - 16] ; load renderer pointer
+            lea rsi, [rbp - 32] ; load address of SDL_Rect
+            call SDL_RenderFillRect
+
+            .draw_next_projectile:
+                inc dword [rel projectile_index]
+                jmp .draw_projectiles
 
         ; Draw Enemies
         .prepare_draw_enemies:
@@ -890,6 +982,130 @@ draw_hud:
     .done:
         mov rsp, rbp
         pop rbp
+        ret
+
+; ! Function: fire_projectile
+; Fires a projectile in the direction the player is facing.
+fire_projectile:
+    ; Check Cooldown
+    cmp dword [rel player_fire_cooldown], 0
+    jg .done
+    mov dword [rel projectile_index], 0
+
+    .fire_slot:
+        mov ecx, [rel projectile_index]
+        cmp ecx, MAX_PROJECTILES
+        jge .done
+
+        mov eax, ecx
+        imul eax, PROJECTILE_SIZE
+        lea rdx, [rel projectiles]
+        add rdx, rax
+        cmp dword [rdx + 28], 0 ; check if projectile is alive
+        je .activate
+
+        inc dword [rel projectile_index]
+        jmp .fire_slot
+    
+    .activate:
+        ; Set projectile position to player's center
+        mov eax, [rel player_w]
+        shr eax, 1 ; center x
+        add eax, [rel player_x]
+        sub eax, PROJECTILE_WIDTH / 2
+        mov [rdx + 0], eax ; projectile.x
+
+        mov eax, [rel player_h]
+        shr eax, 1 ; center y
+        add eax, [rel player_y]
+        sub eax, PROJECTILE_HEIGHT / 2
+        mov [rdx + 4], eax ; projectile.y
+
+        mov dword [rdx + 8], PROJECTILE_WIDTH ; projectile.w
+        mov dword [rdx + 12], PROJECTILE_HEIGHT ; projectile.h
+        mov dword [rdx + 24], PROJECTILE_DAMAGE ; projectile.damage
+
+        ; Direction
+        cmp dword [rel player_direction], 0 ; up
+        je .up
+        cmp dword [rel player_direction], 1 ; right
+        je .right
+        cmp dword [rel player_direction], 2 ; down
+        je .down
+
+        .left:
+            mov dword [rdx + 16], -PROJECTILE_SPEED ; velocity_x
+            mov dword [rdx + 20], 0 ; velocity_y
+            jmp .activate_done
+        .up:
+            mov dword [rdx + 16], 0 ; velocity_x
+            mov dword [rdx + 20], -PROJECTILE_SPEED ; velocity_y
+            jmp .activate_done
+        .right:
+            mov dword [rdx + 16], PROJECTILE_SPEED ; velocity_x
+            mov dword [rdx + 20], 0 ; velocity_y
+            jmp .activate_done
+        .down:
+            mov dword [rdx + 16], 0 ; velocity_x
+            mov dword [rdx + 20], PROJECTILE_SPEED ; velocity_y
+
+    .activate_done:
+        mov dword [rdx + 28], 1 ; projectile.alive
+        mov dword [rel player_fire_cooldown], FIRE_COOLDOWN
+        ret
+
+    .done:
+        ret
+
+; ! Function: update_projectiles
+; Updates the position of all alive projectiles and checks for collisions with walls and enemies.
+update_projectiles:
+    mov dword [rel projectile_index], 0
+    .loop:
+        mov ecx, [rel projectile_index]
+        cmp ecx, MAX_PROJECTILES
+        jge .done
+
+        mov eax, ecx
+        imul eax, PROJECTILE_SIZE
+        lea rdx, [rel projectiles]
+        add rdx, rax
+
+        cmp dword [rdx + 28], 0 ; check if projectile is alive
+        je .next
+
+        ; x += velocity_x
+        mov eax, [rdx + 0] ; projectile.x
+        add eax, [rdx + 16] ; projectile.velocity_x
+        mov [rdx + 0], eax ; update projectile.x
+
+        ; y += velocity_y
+        mov eax, [rdx + 4] ; projectile.y
+        add eax, [rdx + 20] ; projectile.velocity_y
+        mov [rdx + 4], eax ; update projectile.y
+
+        ; Screen Boundaries Check
+        cmp dword [rdx + 0], 0
+        jl .deactivate
+        cmp dword [rdx + 4], 0
+        jl .deactivate
+
+        mov eax, [rdx + 0]
+        cmp eax, WINDOW_WIDTH
+        jge .deactivate
+        mov eax, [rdx + 4]
+        mov ecx, WINDOW_HEIGHT - HUD_HEIGHT
+        cmp eax, ecx
+        jge .deactivate
+        jmp .next
+
+    .deactivate:
+        mov dword [rdx + 28], 0 ; projectile.alive = 0
+
+    .next:
+        inc dword [rel projectile_index]
+        jmp .loop
+    .done:
         ret
 
 ; ! Function: debug_log
