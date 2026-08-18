@@ -112,15 +112,17 @@ section .data
     ; +12   h
     ; +16   speed
     ; +20   alive
+    ; +24   health
     ENEMY_WIDTH equ 30
     ENEMY_HEIGHT equ 30
-    ENEMY_SIZE equ 24
+    ENEMY_SIZE equ 28
     ENEMY_SPEED equ 2
+    ENEMY_HEALTH equ 50
     enemy_count equ 3
     enemies:
-        dd 100, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
-        dd 650, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
-        dd 400, 500, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1
+        dd 100, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
+        dd 650, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
+        dd 400, 500, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
     
     ; ! Player Properties
     PLAYER_MAX_HEALTH equ 100
@@ -1057,6 +1059,120 @@ fire_projectile:
     .done:
         ret
 
+; ! Function: projectile_hits_wall
+; Checks if the projectile collides with any wall
+; Args:
+;   rdi: pointer to projectile rectangle
+; Returns:
+;   eax: 1 if collision detected, 0 otherwise
+projectile_hits_wall:
+    ; Build Projectile Rectangle
+    mov eax, [rdi + 0] ; projectile.x
+    mov [rel candidate_rect + 0], eax
+    mov eax, [rdi + 4] ; projectile.y
+    mov [rel candidate_rect + 4], eax
+    mov eax, [rdi + 8] ; projectile.w
+    mov [rel candidate_rect + 8], eax
+    mov eax, [rdi + 12] ; projectile.h
+    mov [rel candidate_rect + 12], eax
+    mov dword [rel wall_index], 0 ; wall index = 0
+
+    .wall_loop:
+        mov ecx, [rel wall_index]
+        cmp ecx, wall_count
+        jge .no_collision
+
+        mov eax, ecx
+        shl eax, 4
+        lea rsi, [rel walls]
+        add rsi, rax
+        lea rdi, [rel candidate_rect]
+
+        call rects_overlap
+        test eax, eax
+        jnz .collision
+        inc dword [rel wall_index]
+        jmp .wall_loop
+    
+    .collision:
+        mov eax, 1 ; collision detected
+        ret
+    .no_collision:
+        xor eax, eax ; no collision
+        ret
+
+; ! Function: projectile_hits_enemy
+; Checks if the projectile collides with any alive enemy
+; Args:
+;   rdi: pointer to projectile rectangle
+; Returns:
+;   eax: 1 if collision detected, 0 otherwise
+projectile_hits_enemy:
+    mov [rel projectile_current], rdi
+    ; Build Projectile Rectangle
+    mov eax, [rdi + 0] ; projectile.x
+    mov [rel candidate_rect + 0], eax
+    mov eax, [rdi + 4] ; projectile.y
+    mov [rel candidate_rect + 4], eax
+    mov eax, [rdi + 8] ; projectile.w
+    mov [rel candidate_rect + 8], eax
+    mov eax, [rdi + 12] ; projectile.h
+    mov [rel candidate_rect + 12], eax
+    mov dword [rel enemy_index], 0 ; enemy index = 0
+
+    .enemy_loop:
+        mov ecx, [rel enemy_index]
+        cmp ecx, enemy_count
+        jge .no_collision
+
+        mov eax, ecx
+        imul eax, ENEMY_SIZE
+        lea rdx, [rel enemies]
+        add rdx, rax
+
+        cmp dword [rdx + 20], 0 ; check if enemy is alive
+        je .next_enemy
+
+        ; Build Enemy Rectangle
+        mov eax, [rdx + 0] ; enemy.x
+        mov [rel enemy_rect + 0], eax
+        mov eax, [rdx + 4] ; enemy.y
+        mov [rel enemy_rect + 4], eax
+        mov eax, [rdx + 8] ; enemy.w
+        mov [rel enemy_rect + 8], eax
+        mov eax, [rdx + 12] ; enemy.h
+        mov [rel enemy_rect + 12], eax
+
+        lea rdi, [rel candidate_rect]
+        lea rsi, [rel enemy_rect]
+        call rects_overlap
+        test eax, eax
+        jz .next_enemy
+
+        mov ecx, [rel enemy_index]
+        mov eax, ecx
+        imul eax, ENEMY_SIZE
+        lea rdx, [rel enemies]
+        add rdx, rax
+        mov eax, [rdx + 24] ; enemy.health
+        sub eax, [rel projectile_current + 24] ; subtract projectile.damage
+        mov [rdx + 24], eax ; update enemy.health
+
+        cmp dword [rdx + 24], 0 ; check if enemy is dead
+        jg .enemy_survived
+        mov dword [rdx + 20], 0 ; enemy.alive = 0
+        mov dword [rdx + 24], 0 ; enemy.health = 0
+        
+        .enemy_survived:
+            mov eax, 1 ; collision detected
+            ret
+        .next_enemy:
+            inc dword [rel enemy_index]
+            jmp .enemy_loop
+        .no_collision:
+            xor eax, eax ; no collision
+            ret
+
 ; ! Function: update_projectiles
 ; Updates the position of all alive projectiles and checks for collisions with walls and enemies.
 update_projectiles:
@@ -1097,6 +1213,16 @@ update_projectiles:
         mov ecx, WINDOW_HEIGHT - HUD_HEIGHT
         cmp eax, ecx
         jge .deactivate
+
+        mov rdi, rdx
+        call projectile_hits_wall
+        test eax, eax
+        jnz .deactivate
+
+        mov rdi, rdx
+        call projectile_hits_enemy
+        test eax, eax
+        jnz .deactivate
         jmp .next
 
     .deactivate:
