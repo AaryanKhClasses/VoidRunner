@@ -11,6 +11,7 @@ extern SDL_SetRenderDrawColor
 extern SDL_RenderClear
 extern SDL_RenderFillRect
 extern SDL_RenderPresent
+extern SDL_GetTicks
 extern SDL_Delay
 extern SDL_Quit
 
@@ -93,6 +94,7 @@ section .data
     msg_game_started db "Game started", 0
     msg_game_over db "Game Over!", 0
     msg_player_health db "Player Health", 0
+    msg_time_delta db "Time Delta", 0
 
     ; ! Wall Struct:
     ; +0    x
@@ -166,6 +168,7 @@ section .bss
     key_left resb 1
     key_right resb 1
     projectiles resb PROJECTILE_SIZE * MAX_PROJECTILES
+    projectile_current resq 1
 
     candidate_x resd 1
     candidate_y resd 1
@@ -181,7 +184,9 @@ section .bss
     player_rect resd 4
 
     game_state resd 1
-
+    previous_ticks resd 1
+    delta_time resd 1
+    delta_seconds resd 1
 
 section .text
 main:
@@ -210,6 +215,10 @@ main:
     call SDL_Init
     test eax, eax
     jnz .quit
+
+    ; Initialize Timing
+    call SDL_GetTicks
+    mov [rel previous_ticks], eax
 
     ; Create Window
     lea rdi, [rel window_title]
@@ -325,6 +334,18 @@ main:
             ; Check if the game is over
             cmp dword [rel game_state], GAME_OVER
             je .render
+
+            ; Update Timing
+            call SDL_GetTicks
+            mov ecx, eax
+            sub eax, [rel previous_ticks]
+            cmp eax, 100
+            jle .delta_ok
+            mov eax, 100
+            .delta_ok:
+                mov [rel delta_time], eax
+                mov [rel previous_ticks], ecx
+                LOG_INT msg_time_delta, [rel delta_time]
 
             ; Horizontal Movement
             mov eax, [rel player_x]
@@ -1186,6 +1207,7 @@ update_projectiles:
         imul eax, PROJECTILE_SIZE
         lea rdx, [rel projectiles]
         add rdx, rax
+        mov [rel projectile_current], rdx
 
         cmp dword [rdx + 28], 0 ; check if projectile is alive
         je .next
@@ -1226,6 +1248,7 @@ update_projectiles:
         jmp .next
 
     .deactivate:
+        mov rdx, [rel projectile_current]
         mov dword [rdx + 28], 0 ; projectile.alive = 0
 
     .next:
