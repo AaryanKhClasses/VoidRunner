@@ -94,7 +94,6 @@ section .data
     msg_game_started db "Game started", 0
     msg_game_over db "Game Over!", 0
     msg_player_health db "Player Health", 0
-    msg_time_delta db "Time Delta", 0
 
     ; ! Wall Struct:
     ; +0    x
@@ -118,7 +117,7 @@ section .data
     ENEMY_WIDTH equ 30
     ENEMY_HEIGHT equ 30
     ENEMY_SIZE equ 28
-    ENEMY_SPEED equ 2
+    ENEMY_SPEED equ 120 ; pixels per second
     ENEMY_HEALTH equ 50
     enemy_count equ 3
     enemies:
@@ -128,6 +127,7 @@ section .data
     
     ; ! Player Properties
     PLAYER_MAX_HEALTH equ 100
+    PLAYER_SPEED equ 250 ; pixels per second
     PLAYER_DAMAGE equ 10
     DAMAGE_COOLDOWN equ 500
 
@@ -147,7 +147,7 @@ section .data
     MAX_PROJECTILES equ 64
     PROJECTILE_WIDTH equ 8
     PROJECTILE_HEIGHT equ 8
-    PROJECTILE_SPEED equ 8
+    PROJECTILE_SPEED equ 500 ; pixels per second
     PROJECTILE_DAMAGE equ 20
     FIRE_COOLDOWN equ 200
     PROJECTILE_SIZE equ 32
@@ -186,7 +186,7 @@ section .bss
     game_state resd 1
     previous_ticks resd 1
     delta_time resd 1
-    delta_seconds resd 1
+    movement_delta resd 1
 
 section .text
 main:
@@ -345,18 +345,25 @@ main:
             .delta_ok:
                 mov [rel delta_time], eax
                 mov [rel previous_ticks], ecx
-                LOG_INT msg_time_delta, [rel delta_time]
+
+            ; Calculate Movement Delta
+            mov eax, PLAYER_SPEED
+            imul eax, [rel delta_time]
+            mov ecx, 1000
+            cdq
+            idiv ecx
+            mov [rel movement_delta], eax
 
             ; Horizontal Movement
             mov eax, [rel player_x]
             cmp byte [rel key_left], 0
             je .check_move_right
-            sub eax, 4
+            sub eax, [rel movement_delta]
 
             .check_move_right:
                 cmp byte [rel key_right], 0
                 je .store_candidate_x
-                add eax, 4
+                add eax, [rel movement_delta]
 
             .store_candidate_x:
                 mov [rel candidate_x], eax
@@ -374,12 +381,12 @@ main:
                 mov eax, [rel player_y]
                 cmp byte [rel key_up], 0
                 je .check_move_down
-                sub eax, 4
+                sub eax, [rel movement_delta]
 
             .check_move_down:
                 cmp byte [rel key_down], 0
                 je .store_candidate_y
-                add eax, 4
+                add eax, [rel movement_delta]
 
             .store_candidate_y:
                 mov [rel candidate_y], eax
@@ -687,6 +694,14 @@ update_enemies:
     push rbx
     push r12
     push r13
+
+    mov eax, ENEMY_SPEED
+    imul eax, [rel delta_time]
+    mov ecx, 1000
+    cdq
+    idiv ecx
+    mov [rel movement_delta], eax
+
     xor r12d, r12d ; enemy index = 0
 
     .enemy_loop:
@@ -707,14 +722,14 @@ update_enemies:
         cmp eax, [rel player_x]
         jge .enemy_left_checked
 
-        add eax, [r13 + 16] ; enemy.x + speed
+        add eax, [rel movement_delta] ; enemy.x + speed
         mov [rel enemy_candidate_x], eax
         jmp .horizontal_candidate_ready
 
         .enemy_left_checked:
             cmp eax, [rel player_x]
             jle .horizontal_candidate_ready
-            sub eax, [r13 + 16] ; enemy.x - speed
+            sub eax, [rel movement_delta] ; enemy.x - speed
             mov [rel enemy_candidate_x], eax
 
         .horizontal_candidate_ready:
@@ -751,14 +766,14 @@ update_enemies:
             mov eax, [r13 + 4] ; enemy.y
             cmp eax, [rel player_y]
             jge .enemy_above_checked
-            add eax, [r13 + 16] ; enemy.y + speed
+            add eax, [rel movement_delta] ; enemy.y + speed
             mov [rel enemy_candidate_y], eax
             jmp .vertical_candidate_ready
 
         .enemy_above_checked:
             cmp eax, [rel player_y]
             jle .vertical_candidate_ready
-            sub eax, [r13 + 16] ; enemy.y - speed
+            sub eax, [rel movement_delta] ; enemy.y - speed
             mov [rel enemy_candidate_y], eax
             jmp .vertical_candidate_ready
         
@@ -1212,15 +1227,23 @@ update_projectiles:
         cmp dword [rdx + 28], 0 ; check if projectile is alive
         je .next
 
-        ; x += velocity_x
-        mov eax, [rdx + 0] ; projectile.x
-        add eax, [rdx + 16] ; projectile.velocity_x
-        mov [rdx + 0], eax ; update projectile.x
+        ; x += velocity_x * delta_time / 1000
+        mov eax, [rdx + 16] ; projectile.velocity_x
+        imul eax, [rel delta_time]
+        mov ecx, 1000
+        cdq
+        idiv ecx
+        mov rdx, [rel projectile_current]
+        add [rdx + 0], eax ; update projectile.x
 
-        ; y += velocity_y
-        mov eax, [rdx + 4] ; projectile.y
-        add eax, [rdx + 20] ; projectile.velocity_y
-        mov [rdx + 4], eax ; update projectile.y
+        ; y += velocity_y * delta_time / 1000
+        mov eax, [rdx + 20] ; projectile.velocity_y
+        imul eax, [rel delta_time]
+        mov ecx, 1000
+        cdq
+        idiv ecx
+        mov rdx, [rel projectile_current]
+        add [rdx + 4], eax ; update projectile.y
 
         ; Screen Boundaries Check
         cmp dword [rdx + 0], 0
