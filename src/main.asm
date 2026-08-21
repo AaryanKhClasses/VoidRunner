@@ -119,12 +119,19 @@ section .data
     ENEMY_SIZE equ 28
     ENEMY_SPEED equ 120 ; pixels per second
     ENEMY_HEALTH equ 50
+    ENEMY_SCORE equ 100
+    ENEMY_HEALTHBAR_WIDTH equ 30
+    ENEMY_HEALTHBAR_HEIGHT equ 5
+    ENEMY_HEALTHBAR_OFFSET equ 10
     enemy_count equ 3
     enemies:
         dd 100, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
         dd 650, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
         dd 400, 500, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
-    
+
+    healthbar_rect:
+        dd 0, 0, 0, ENEMY_HEALTHBAR_HEIGHT ; x, y, w, h
+
     ; ! Player Properties
     PLAYER_MAX_HEALTH equ 100
     PLAYER_SPEED equ 250 ; pixels per second
@@ -183,6 +190,7 @@ section .bss
     enemy_rect resd 4
     player_rect resd 4
 
+    score resd 1
     game_state resd 1
     previous_ticks resd 1
     delta_time resd 1
@@ -206,6 +214,7 @@ main:
     mov dword [rel player_h], 50
     mov dword [rel player_health], PLAYER_MAX_HEALTH
     mov dword [rel player_damage_cooldown], 0
+    mov dword [rel score], 0
     mov dword [rel game_state], GAME_PLAYING
     mov dword [rel player_fire_cooldown], 0
     mov dword [rel player_direction], 0
@@ -422,7 +431,8 @@ main:
         .update_fire_cooldown:
             cmp dword [rel player_fire_cooldown], 0
             jle .fire_cooldown_done
-            sub dword [rel player_fire_cooldown], 16
+            mov eax, [rel delta_time]
+            sub dword [rel player_fire_cooldown], eax
             cmp dword [rel player_fire_cooldown], 0
             jg .fire_cooldown_done
             mov dword [rel player_fire_cooldown], 0
@@ -520,15 +530,16 @@ main:
 
         ; Draw Enemies
         .prepare_draw_enemies:
+            mov dword [rel enemy_index], 0 ; reset enemy index
+
+        .draw_enemies:
             mov rdi, [rbp - 16] ; load renderer pointer
             mov esi, 255 ; red
             mov edx, 60 ; green
             mov ecx, 60 ; blue
             mov r8d, 255 ; alpha
             call SDL_SetRenderDrawColor
-            mov dword [rel enemy_index], 0 ; reset enemy index
 
-        .draw_enemies:
             mov ecx, [rel enemy_index]
             cmp ecx, enemy_count
             jge .draw_player
@@ -539,6 +550,14 @@ main:
 
             cmp dword [rdx + 20], 0 ; check if enemy is alive
             je .draw_next_enemy
+
+            mov eax, [rdx + 0]
+            mov [rel healthbar_rect + 0], eax ; healthbar.x
+            mov eax, [rdx + 4]
+            sub eax, ENEMY_HEALTHBAR_OFFSET
+            mov [rel healthbar_rect + 4], eax ; healthbar.y
+            mov dword [rel healthbar_rect + 8], ENEMY_HEALTHBAR_WIDTH ; healthbar.w
+            mov dword [rel healthbar_rect + 12], ENEMY_HEALTHBAR_HEIGHT ; healthbar.h
 
             mov eax, [rdx] ; enemy.x
             mov [rbp - 32], eax ; SDL_Rect.x
@@ -551,6 +570,41 @@ main:
 
             mov rdi, [rbp - 16] ; load renderer pointer
             lea rsi, [rbp - 32] ; load address of SDL_Rect
+            call SDL_RenderFillRect
+
+            ; Draw Enemy Health Bar
+            mov rdi, [rbp - 16]
+            mov esi, 60
+            mov edx, 60
+            mov ecx, 60
+            mov r8d, 255
+            call SDL_SetRenderDrawColor
+            mov rdi, [rbp - 16]
+            lea rsi, [rel healthbar_rect]
+            call SDL_RenderFillRect
+
+            mov ecx, [rel enemy_index]
+            mov eax, ecx
+            imul eax, ENEMY_SIZE
+            lea rdx, [rel enemies]
+            add rdx, rax
+            mov eax, ENEMY_HEALTHBAR_WIDTH
+            imul eax, [rdx + 24] ; healthbar width * enemy.health
+            mov ecx, ENEMY_HEALTH
+            cdq
+            idiv ecx
+            mov [rel healthbar_rect + 8], eax ; healthbar.w
+
+            test eax, eax
+            jz .draw_next_enemy
+            mov rdi, [rbp - 16]
+            mov esi, 50
+            mov edx, 220
+            mov ecx, 70
+            mov r8d, 255
+            call SDL_SetRenderDrawColor
+            mov rdi, [rbp - 16]
+            lea rsi, [rel healthbar_rect]
             call SDL_RenderFillRect
 
             .draw_next_enemy:
@@ -931,7 +985,8 @@ handle_player_damage:
 
     cmp dword [rel player_damage_cooldown], 0
     jle .check_collision
-    sub dword [rel player_damage_cooldown], 16
+    mov eax, [rel delta_time]
+    sub dword [rel player_damage_cooldown], eax
     cmp dword [rel player_damage_cooldown], 0
     jg .done
     mov dword [rel player_damage_cooldown], 0
@@ -1191,14 +1246,16 @@ projectile_hits_enemy:
         lea rdx, [rel enemies]
         add rdx, rax
         mov eax, [rdx + 24] ; enemy.health
-        sub eax, [rel projectile_current + 24] ; subtract projectile.damage
+        mov rcx, [rel projectile_current]
+        sub eax, [rcx + 24] ; subtract projectile.damage
         mov [rdx + 24], eax ; update enemy.health
 
         cmp dword [rdx + 24], 0 ; check if enemy is dead
         jg .enemy_survived
         mov dword [rdx + 20], 0 ; enemy.alive = 0
         mov dword [rdx + 24], 0 ; enemy.health = 0
-        
+        add dword [rel score], ENEMY_SCORE
+
         .enemy_survived:
             mov eax, 1 ; collision detected
             ret
