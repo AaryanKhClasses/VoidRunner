@@ -159,6 +159,27 @@ section .data
     FIRE_COOLDOWN equ 200
     PROJECTILE_SIZE equ 32
 
+    ; ! Fonts:
+    FONT_WIDTH equ 5
+    FONT_HEIGHT equ 7
+    FONT_SCALE equ 3
+    FONT_SPACING equ 2
+
+    font_pixel_rect:
+        dd 0, 0, FONT_SCALE, FONT_SCALE ; x, y, w, h
+
+    font_digits:
+        db 01110b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b ; 0
+        db 00100b, 01100b, 00100b, 00100b, 00100b, 00100b, 01110b ; 1
+        db 01110b, 10001b, 00001b, 00010b, 00100b, 01000b, 11111b ; 2
+        db 01110b, 10001b, 00001b, 00110b, 00001b, 10001b, 01110b ; 3
+        db 00010b, 00110b, 01010b, 10010b, 11111b, 00010b, 00010b ; 4
+        db 11111b, 10000b, 11110b, 00001b, 00001b, 10001b, 01110b ; 5
+        db 00110b, 01000b, 10000b, 11110b, 10001b, 10001b, 01110b ; 6
+        db 11111b, 00001b, 00010b, 00100b, 01000b, 01000b, 01000b ; 7
+        db 01110b, 10001b, 10001b, 01110b, 10001b, 10001b, 01110b ; 8
+        db 01110b, 10001b, 10001b, 01111b, 00001b, 00010b, 01100b ; 9
+
 section .bss
     event resb 56
 
@@ -1335,6 +1356,71 @@ update_projectiles:
         inc dword [rel projectile_index]
         jmp .loop
     .done:
+        ret
+
+; ! Function: draw_digit
+; Draws a single digit at the specified position.
+; Args:
+;   rdi: pointer to renderer
+;   esi: digit to draw (0-9)
+;   edx: x position
+;   ecx: y position
+draw_digit:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+
+    mov [rbp - 4], esi
+    mov [rbp - 8], edx
+    mov [rbp - 12], ecx
+    mov [rbp - 32], rdi
+
+    mov eax, [rbp - 4]
+    imul eax, FONT_WIDTH
+    lea r8, [rel font_digits]
+    add r8, rax
+    mov [rbp - 24], r8
+
+    mov dword [rbp - 16], 0
+    .row_loop:
+        cmp dword [rbp - 16], FONT_HEIGHT
+        jge .done
+
+        mov r8, [rbp - 24]
+        mov eax, [rbp - 16]
+        movzx eax, byte [r8 + rax]
+        mov [rbp - 28], eax
+
+    mov dword [rbp - 20], 0
+    .col_loop:
+        cmp dword [rbp - 20], FONT_WIDTH
+        jge .next_row
+        mov eax, 4
+        sub eax, [rbp - 20]
+        bt [rbp - 28], eax
+        jnc .next_col
+
+        mov eax, [rbp - 20]
+        imul eax, FONT_SCALE
+        add eax, [rbp - 8]
+        mov [rel font_pixel_rect + 0], eax
+        mov eax, [rbp - 16]
+        imul eax, FONT_SCALE
+        add eax, [rbp - 12]
+        mov [rel font_pixel_rect + 4], eax
+        mov rdi, [rbp - 32]
+        lea rsi, [rel font_pixel_rect]
+        call SDL_RenderFillRect
+    
+    .next_col:
+        inc dword [rbp - 20]
+        jmp .col_loop
+    .next_row:
+        inc dword [rbp - 16]
+        jmp .row_loop
+    .done:
+        mov rsp, rbp
+        pop rbp
         ret
 
 ; ! Function: debug_log
