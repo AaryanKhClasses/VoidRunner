@@ -164,6 +164,7 @@ section .data
     FONT_HEIGHT equ 7
     FONT_SCALE equ 3
     FONT_SPACING equ 2
+    SCORE_DIGITS equ 6
 
     font_pixel_rect:
         dd 0, 0, FONT_SCALE, FONT_SCALE ; x, y, w, h
@@ -1080,7 +1081,7 @@ draw_hud:
     mov ecx, PLAYER_MAX_HEALTH
     idiv ecx
     test eax, eax
-    jz .done
+    jz .draw_score
 
     mov [rbp - 24], eax
     mov rdi, [rbp - 8]
@@ -1092,6 +1093,20 @@ draw_hud:
     mov rdi, [rbp - 8]
     lea rsi, [rbp - 32]
     call SDL_RenderFillRect
+
+    .draw_score:
+        mov rdi, [rbp - 8]
+        mov esi, 255
+        mov edx, 255
+        mov ecx, 255
+        mov r8d, 255
+        call SDL_SetRenderDrawColor
+
+        mov rdi, [rbp - 8]
+        mov esi, [rel score]
+        mov edx, WINDOW_WIDTH - HUD_PADDING - 100
+        mov ecx, WINDOW_HEIGHT - HUD_HEIGHT + HUD_PADDING
+        call draw_number
 
     .done:
         mov rsp, rbp
@@ -1368,56 +1383,111 @@ update_projectiles:
 draw_digit:
     push rbp
     mov rbp, rsp
-    sub rsp, 32
+    sub rsp, 40
 
-    mov [rbp - 4], esi
-    mov [rbp - 8], edx
-    mov [rbp - 12], ecx
-    mov [rbp - 32], rdi
+    mov [rbp - 12], esi
+    mov [rbp - 16], edx
+    mov [rbp - 20], ecx
+    mov [rbp - 8], rdi
 
-    mov eax, [rbp - 4]
-    imul eax, FONT_WIDTH
+    mov eax, [rbp - 12]
+    imul eax, FONT_HEIGHT
     lea r8, [rel font_digits]
     add r8, rax
-    mov [rbp - 24], r8
+    mov [rbp - 40], r8
 
-    mov dword [rbp - 16], 0
+    mov dword [rbp - 24], 0
     .row_loop:
-        cmp dword [rbp - 16], FONT_HEIGHT
+        cmp dword [rbp - 24], FONT_HEIGHT
         jge .done
 
-        mov r8, [rbp - 24]
-        mov eax, [rbp - 16]
+        mov r8, [rbp - 40]
+        mov eax, [rbp - 24]
         movzx eax, byte [r8 + rax]
-        mov [rbp - 28], eax
+        mov [rbp - 32], eax
 
-    mov dword [rbp - 20], 0
+    mov dword [rbp - 28], 0
     .col_loop:
-        cmp dword [rbp - 20], FONT_WIDTH
+        cmp dword [rbp - 28], FONT_WIDTH
         jge .next_row
         mov eax, 4
-        sub eax, [rbp - 20]
-        bt [rbp - 28], eax
+        sub eax, [rbp - 28]
+        bt [rbp - 32], eax
         jnc .next_col
 
-        mov eax, [rbp - 20]
+        mov eax, [rbp - 28]
         imul eax, FONT_SCALE
-        add eax, [rbp - 8]
+        add eax, [rbp - 16]
         mov [rel font_pixel_rect + 0], eax
-        mov eax, [rbp - 16]
+        mov eax, [rbp - 24]
         imul eax, FONT_SCALE
-        add eax, [rbp - 12]
+        add eax, [rbp - 20]
         mov [rel font_pixel_rect + 4], eax
-        mov rdi, [rbp - 32]
+        mov rdi, [rbp - 8]
         lea rsi, [rel font_pixel_rect]
         call SDL_RenderFillRect
     
     .next_col:
-        inc dword [rbp - 20]
+        inc dword [rbp - 28]
         jmp .col_loop
     .next_row:
-        inc dword [rbp - 16]
+        inc dword [rbp - 24]
         jmp .row_loop
+    .done:
+        mov rsp, rbp
+        pop rbp
+        ret
+
+; ! Function: draw_number
+; Draws a six-digit number using the bitmap font.
+; Args:
+;   rdi: pointer to renderer
+;   esi: number to draw (0-999999)
+;   edx: x position
+;   ecx: y position
+draw_number:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 40 ; Stack: renderer -> number -> x -> y -> divisor -> digit index -> current digit -> remainder
+
+    mov [rbp - 8], rdi
+    mov [rbp - 12], esi
+    mov [rbp - 16], edx
+    mov [rbp - 20], ecx
+    mov dword [rbp - 24], 100000 ; divisor
+    mov dword [rbp - 28], 0 ; digit index
+
+    .digit_loop:
+        cmp dword [rbp - 28], SCORE_DIGITS
+        jge .done
+
+        mov eax, [rbp - 12]
+        xor edx, edx
+        div dword [rbp - 24] ; eax = number / divisor
+        mov [rbp - 32], eax ; current digit
+        mov [rbp - 40], edx ; remainder
+
+        mov rdi, [rbp - 8]
+        mov esi, [rbp - 32] ; digit
+        mov edx, [rbp - 16] ; x position
+        mov ecx, [rbp - 20] ; y position
+        call draw_digit
+
+        mov eax, [rbp - 40]
+        mov [rbp - 12], eax ; update number to remainder
+        mov eax, FONT_WIDTH
+        imul eax, FONT_SCALE
+        add eax, FONT_SPACING
+        add [rbp - 16], eax ; update x position for next digit
+
+        mov eax, [rbp - 24]
+        xor edx, edx
+        mov ecx, 10
+        div ecx ; eax = divisor / 10
+        mov [rbp - 24], eax ; update divisor
+        inc dword [rbp - 28] ; increment digit index
+        jmp .digit_loop
+    
     .done:
         mov rsp, rbp
         pop rbp
