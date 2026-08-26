@@ -8,6 +8,7 @@ extern SDL_CreateRenderer
 extern SDL_DestroyRenderer
 extern SDL_PollEvent
 extern SDL_SetRenderDrawColor
+extern SDL_SetRenderDrawBlendMode
 extern SDL_RenderClear
 extern SDL_RenderFillRect
 extern SDL_RenderPresent
@@ -65,6 +66,7 @@ section .data
     SDL_INIT_VIDEO equ 0x00000020
     SDL_WINDOW_SHOWN equ 0x00000004
     SDL_WINDOWPOS_CENTERED equ 0x2FFF0000
+    SDL_BLENDMODE_BLEND equ 1
 
     SDL_QUIT equ 0x100
     SDL_KEYDOWN equ 0x300
@@ -75,6 +77,7 @@ section .data
     SDLK_s equ 115
     SDLK_d equ 100
     SDLK_SPACE equ 32
+    SDLK_r equ 114
 
     ; ! Window Dimensions
     WINDOW_WIDTH equ 1080
@@ -94,6 +97,7 @@ section .data
     msg_game_started db "Game started", 0
     msg_game_over db "Game Over!", 0
     msg_player_health db "Player Health", 0
+    msg_temp db "Temp Debug", 0
 
     ; ! Wall Struct:
     ; +0    x
@@ -164,12 +168,20 @@ section .data
     FONT_HEIGHT equ 7
     FONT_SCALE equ 3
     FONT_SPACING equ 2
+    FONT_LETTER_A equ 10
     SCORE_DIGITS equ 6
+
+    text_game_over db "GAME OVER", 0
+    text_restart db "PRESS R TO RESTART", 0
 
     font_pixel_rect:
         dd 0, 0, FONT_SCALE, FONT_SCALE ; x, y, w, h
 
+    game_over_rect:
+        dd 0, 0, 0, 0 ; x, y, w, h
+
     font_digits:
+        ; Digits 0-9
         db 01110b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b ; 0
         db 00100b, 01100b, 00100b, 00100b, 00100b, 00100b, 01110b ; 1
         db 01110b, 10001b, 00001b, 00010b, 00100b, 01000b, 11111b ; 2
@@ -180,6 +192,34 @@ section .data
         db 11111b, 00001b, 00010b, 00100b, 01000b, 01000b, 01000b ; 7
         db 01110b, 10001b, 10001b, 01110b, 10001b, 10001b, 01110b ; 8
         db 01110b, 10001b, 10001b, 01111b, 00001b, 00010b, 01100b ; 9
+
+        ; Uppercase A-Z
+        db 01110b, 10001b, 10001b, 10001b, 11111b, 10001b, 10001b ; A
+        db 11110b, 10001b, 10001b, 11110b, 10001b, 10001b, 11110b ; B
+        db 01110b, 10001b, 10000b, 10000b, 10000b, 10001b, 01110b ; C
+        db 11110b, 10001b, 10001b, 10001b, 10001b, 10001b, 11110b ; D
+        db 11111b, 10000b, 10000b, 11110b, 10000b, 10000b, 11111b ; E
+        db 11111b, 10000b, 10000b, 11110b, 10000b, 10000b, 10000b ; F
+        db 01110b, 10001b, 10000b, 10111b, 10001b, 10001b, 01110b ; G
+        db 10001b, 10001b, 10001b, 11111b, 10001b, 10001b, 10001b ; H
+        db 00100b, 00100b, 00100b, 00100b, 00100b, 00100b, 00100b ; I
+        db 00010b, 00010b, 00010b, 00010b, 10010b, 10010b, 01100b ; J
+        db 10001b, 10010b, 10100b, 11000b, 10100b, 10010b, 10001b ; K
+        db 10000b, 10000b, 10000b, 10000b, 10000b, 10000b, 11111b ; L
+        db 10001b, 11011b, 10101b, 10001b, 10001b, 10001b, 10001b ; M
+        db 10001b, 11001b, 10101b, 10011b, 10001b, 10001b, 10001b ; N
+        db 01110b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b ; O
+        db 11110b, 10001b, 10001b, 11110b, 10000b, 10000b, 10000b ; P
+        db 01110b, 10001b, 10001b, 10001b, 10101b, 10010b, 01101b ; Q
+        db 11110b, 10001b, 10001b, 11110b, 10100b, 10010b, 10001b ; R
+        db 01111b, 10000b, 10000b, 01110b, 00001b, 00001b, 11110b ; S
+        db 11111b, 00100b, 00100b, 00100b, 00100b, 00100b, 00100b ; T
+        db 10001b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b ; U
+        db 10001b, 10001b, 10001b, 10001b, 10001b, 01010b, 00100b ; V
+        db 10001b, 10001b, 10001b, 10101b, 10101b, 11011b, 10001b ; W
+        db 10001b, 10001b, 01010b, 00100b, 01010b, 10001b, 10001b ; X
+        db 10001b, 10001b, 01010b, 00100b, 00100b, 00100b, 00100b ; Y
+        db 11111b, 00001b, 00010b, 00100b, 01000b, 10000b, 11111b ; Z
 
 section .bss
     event resb 56
@@ -306,6 +346,8 @@ main:
             je .set_key_right
             cmp eax, SDLK_SPACE
             je .set_key_space
+            cmp eax, SDLK_r
+            je .set_key_r
             jmp .poll_events
 
             .set_key_up:
@@ -327,6 +369,11 @@ main:
             .set_key_space:
                 call fire_projectile
                 jmp .poll_events
+            .set_key_r:
+                cmp dword [rel game_state], GAME_OVER
+                jne .poll_events
+                call reset_game
+                jmp .poll_events
 
         .key_up:
             mov eax, [rel event + 20]
@@ -340,6 +387,8 @@ main:
             je .clear_key_right
             cmp eax, SDLK_SPACE
             je .clear_key_space
+            cmp eax, SDLK_r
+            je .clear_key_r
             jmp .poll_events
 
             .clear_key_up:
@@ -359,6 +408,8 @@ main:
                 mov dword [rel player_direction], 1
                 jmp .poll_events
             .clear_key_space:
+                jmp .poll_events
+            .clear_key_r:
                 jmp .poll_events
 
         .update:
@@ -660,6 +711,12 @@ main:
             mov rdi, [rbp - 16]
             call draw_hud
 
+            cmp dword [rel game_state], GAME_OVER
+            jne .render_done
+            mov rdi, [rbp - 16]
+            call draw_game_over
+
+        .render_done:
             ; Present Renderer
             mov rdi, [rbp - 16] ; load renderer pointer
             call SDL_RenderPresent
@@ -1373,17 +1430,60 @@ update_projectiles:
     .done:
         ret
 
-; ! Function: draw_digit
-; Draws a single digit at the specified position.
+; ! Function: reset_game
+; Resets the game state, player, enemies, and projectiles to their initial values.
+reset_game:
+    ; Reset Player
+    mov dword [rel player_x], WINDOW_WIDTH / 2 - 25
+    mov dword [rel player_y], WINDOW_HEIGHT / 2 - 25
+    mov dword [rel player_health], PLAYER_MAX_HEALTH
+    mov dword [rel player_direction], 0 ; up
+    mov dword [rel player_fire_cooldown], 0
+    mov dword [rel player_damage_cooldown], 0
+    mov dword [rel score], 0
+    mov dword [rel game_state], GAME_PLAYING
+
+    ; Reset Enemies
+    mov dword [rel enemies + 0], 100
+    mov dword [rel enemies + 4], 100
+    mov dword [rel enemies + 20], 1
+    mov dword [rel enemies + 24], ENEMY_HEALTH
+    mov dword [rel enemies + ENEMY_SIZE + 0], 650
+    mov dword [rel enemies + ENEMY_SIZE + 4], 100
+    mov dword [rel enemies + ENEMY_SIZE + 20], 1
+    mov dword [rel enemies + ENEMY_SIZE + 24], ENEMY_HEALTH
+    mov dword [rel enemies + ENEMY_SIZE * 2 + 0], 400
+    mov dword [rel enemies + ENEMY_SIZE * 2 + 4], 500
+    mov dword [rel enemies + ENEMY_SIZE * 2 + 20], 1
+    mov dword [rel enemies + ENEMY_SIZE * 2 + 24], ENEMY_HEALTH
+
+    ; Reset Projectiles
+    mov dword [rel projectile_index], 0
+    .projectile_loop:
+        cmp dword [rel projectile_index], MAX_PROJECTILES
+        jge .done_projectiles
+        mov eax, [rel projectile_index]
+        imul eax, PROJECTILE_SIZE
+        lea rdi, [rel projectiles]
+        add rdi, rax
+        mov dword [rdi + 28], 0 ; projectile.alive = 0
+        inc dword [rel projectile_index]
+        jmp .projectile_loop
+
+    .done_projectiles:
+        ret
+
+; ! Function: draw_char
+; Draws a single character at the specified position.
 ; Args:
 ;   rdi: pointer to renderer
-;   esi: digit to draw (0-9)
+;   esi: character to draw
 ;   edx: x position
 ;   ecx: y position
-draw_digit:
+draw_char:
     push rbp
     mov rbp, rsp
-    sub rsp, 40
+    sub rsp, 48
 
     mov [rbp - 12], esi
     mov [rbp - 16], edx
@@ -1438,6 +1538,16 @@ draw_digit:
         pop rbp
         ret
 
+; ! Function: draw_digit
+; Draws a single digit (0-9) at the specified position.
+; Args:
+;   rdi: pointer to renderer
+;   esi: digit to draw (0-9)
+;   edx: x position
+;   ecx: y position
+draw_digit:
+    jmp draw_char
+
 ; ! Function: draw_number
 ; Draws a six-digit number using the bitmap font.
 ; Args:
@@ -1448,7 +1558,7 @@ draw_digit:
 draw_number:
     push rbp
     mov rbp, rsp
-    sub rsp, 40 ; Stack: renderer -> number -> x -> y -> divisor -> digit index -> current digit -> remainder
+    sub rsp, 48 ; Stack: renderer -> number -> x -> y -> divisor -> digit index -> current digit -> remainder
 
     mov [rbp - 8], rdi
     mov [rbp - 12], esi
@@ -1492,6 +1602,137 @@ draw_number:
         mov rsp, rbp
         pop rbp
         ret
+
+; ! Function: draw_text
+; Draws a string of text using the bitmap font.
+; Args:
+;   rdi: pointer to renderer
+;   rsi: pointer to null-terminated string
+;   edx: x position
+;   ecx: y position
+draw_text:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32 ; Stack: renderer -> string -> x -> y -> char index
+
+    mov [rbp - 8], rdi
+    mov [rbp - 16], rsi
+    mov [rbp - 20], edx
+    mov [rbp - 24], ecx
+
+    .loop:
+        mov rsi, [rbp - 16]
+        movzx eax, byte [rsi]
+        test eax, eax
+        jz .done
+
+        cmp eax, ' '
+        je .space
+
+        cmp eax, '0'
+        jb .next
+        cmp eax, '9'
+        jbe .digit
+
+        cmp eax, 'A'
+        jb .next
+        cmp eax, 'Z'
+        ja .next
+
+        sub eax, 'A'
+        add eax, FONT_LETTER_A
+        jmp .draw
+
+    .digit:
+        sub eax, '0'
+    
+    .draw:
+        mov rdi, [rbp - 8]
+        mov esi, eax
+        mov edx, [rbp - 20]
+        mov ecx, [rbp - 24]
+        call draw_char
+
+        mov eax, FONT_WIDTH
+        imul eax, FONT_SCALE
+        add eax, FONT_SPACING
+        add [rbp - 20], eax ; update x position for next character
+
+    .next:
+        inc qword [rbp - 16] ; move to next character in string
+        jmp .loop
+    
+    .space:
+        mov eax, FONT_WIDTH
+        imul eax, FONT_SCALE
+        add eax, FONT_SPACING
+        add [rbp - 20], eax ; update x position for space
+        inc qword [rbp - 16] ; move to next character in string
+        jmp .loop
+    
+    .done:
+        mov rsp, rbp
+        pop rbp
+        ret
+
+; ! Function: draw_game_over
+; Draws the "Game Over" message on the screen.
+draw_game_over:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+
+    mov [rbp - 8], rdi
+
+    mov dword [rel game_over_rect + 0], 0
+    mov dword [rel game_over_rect + 4], 0
+    mov dword [rel game_over_rect + 8], WINDOW_WIDTH
+    mov dword [rel game_over_rect + 12], WINDOW_HEIGHT
+
+    mov rdi, [rbp - 8]
+    mov esi, SDL_BLENDMODE_BLEND
+    call SDL_SetRenderDrawBlendMode
+
+    mov rdi, [rbp - 8]
+    mov esi, 0
+    mov edx, 0
+    mov ecx, 0
+    mov r8d, 180
+    call SDL_SetRenderDrawColor
+    mov rdi, [rbp - 8]
+    lea rsi, [rel game_over_rect]
+    call SDL_RenderFillRect
+
+    mov rdi, [rbp - 8]
+    mov esi, 255
+    mov edx, 255
+    mov ecx, 255
+    mov r8d, 255
+    call SDL_SetRenderDrawColor
+
+    mov rdi, [rbp - 8]
+    mov esi, 0
+    call SDL_SetRenderDrawBlendMode
+
+    mov rdi, [rbp - 8]
+    lea rsi, [rel text_game_over]
+    mov edx, 465
+    mov ecx, 220
+    call draw_text
+    mov rdi, [rbp - 8]
+    mov esi, [rel score]
+    mov edx, 480
+    mov ecx, 300
+    call draw_number
+    mov rdi, [rbp - 8]
+    lea rsi, [rel text_restart]
+    mov edx, 405
+    mov ecx, 400
+    call draw_text
+
+    mov rsp, rbp
+    pop rbp
+    ret
 
 ; ! Function: debug_log
 ; Logs a debug message to the console.
