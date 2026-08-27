@@ -221,6 +221,11 @@ section .data
         db 10001b, 10001b, 01010b, 00100b, 00100b, 00100b, 00100b ; Y
         db 11111b, 00001b, 00010b, 00100b, 01000b, 10000b, 11111b ; Z
 
+    GAME_OVER_TITLE_Y equ 220
+    GAME_OVER_SCORE_Y equ 300
+    GAME_OVER_RESTART_Y equ 400
+    SCORE_WIDTH equ (SCORE_DIGITS * (FONT_WIDTH * FONT_SCALE + FONT_SPACING)) - FONT_SPACING
+
 section .bss
     event resb 56
 
@@ -1714,25 +1719,68 @@ draw_game_over:
     mov esi, 0
     call SDL_SetRenderDrawBlendMode
 
+    lea rdi, [rel text_game_over]
+    call text_width
+    mov edx, WINDOW_WIDTH
+    sub edx, eax
+    shr edx, 1
     mov rdi, [rbp - 8]
     lea rsi, [rel text_game_over]
-    mov edx, 465
-    mov ecx, 220
+    mov ecx, GAME_OVER_TITLE_Y
     call draw_text
+
+    mov edx, WINDOW_WIDTH
+    sub edx, SCORE_WIDTH
+    shr edx, 1
     mov rdi, [rbp - 8]
     mov esi, [rel score]
-    mov edx, 480
-    mov ecx, 300
+    mov ecx, GAME_OVER_SCORE_Y
     call draw_number
+
+    lea rdi, [rel text_restart]
+    call text_width
+    mov edx, WINDOW_WIDTH
+    sub edx, eax
+    shr edx, 1
     mov rdi, [rbp - 8]
     lea rsi, [rel text_restart]
-    mov edx, 405
-    mov ecx, 400
+    mov ecx, GAME_OVER_RESTART_Y
     call draw_text
 
     mov rsp, rbp
     pop rbp
     ret
+
+; ! Funtion: text_width
+; Calculates the width of a given string in pixels, considering font width, scale, and spacing. 
+; Args:
+;    rdi: string
+;    eax: width in px
+text_width:
+    xor eax, eax
+    xor ecx, ecx
+
+    .loop:
+        movzx edx, byte [rdi]
+        test edx, edx
+        jz .done
+
+        inc ecx
+        inc rdi
+        jmp .loop
+
+    .done:
+        test ecx, ecx
+        jz .empty
+
+        mov eax, FONT_WIDTH * FONT_SCALE + FONT_SPACING
+        imul eax, ecx
+        sub eax, FONT_SPACING ; remove spacing after last character
+        ret
+
+    .empty:
+        xor eax, eax
+        ret
 
 ; ! Function: debug_log
 ; Logs a debug message to the console.
