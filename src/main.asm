@@ -127,11 +127,7 @@ section .data
     ENEMY_HEALTHBAR_WIDTH equ 30
     ENEMY_HEALTHBAR_HEIGHT equ 5
     ENEMY_HEALTHBAR_OFFSET equ 10
-    enemy_count equ 3
-    enemies:
-        dd 100, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
-        dd 650, 100, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
-        dd 400, 500, ENEMY_WIDTH, ENEMY_HEIGHT, ENEMY_SPEED, 1, ENEMY_HEALTH
+    MAX_ENEMIES equ 32
 
     healthbar_rect:
         dd 0, 0, 0, ENEMY_HEALTHBAR_HEIGHT ; x, y, w, h
@@ -249,6 +245,7 @@ section .bss
     enemy_candidate_x resd 1
     enemy_candidate_y resd 1
 
+    enemies resb ENEMY_SIZE * MAX_ENEMIES
     enemy_index resd 1
     wall_index resd 1
     projectile_index resd 1
@@ -316,6 +313,19 @@ main:
     test rax, rax
     jz .destroy_window
     mov [rbp - 16], rax ; store renderer pointer
+
+    ; Spawn Initial Enemies
+    mov edi, 100
+    mov esi, 100
+    call spawn_enemy
+
+    mov edi, 650
+    mov esi, 100
+    call spawn_enemy
+
+    mov edi, 400
+    mov esi, 500
+    call spawn_enemy
 
     LOG msg_game_started
 
@@ -619,7 +629,7 @@ main:
             call SDL_SetRenderDrawColor
 
             mov ecx, [rel enemy_index]
-            cmp ecx, enemy_count
+            cmp ecx, MAX_ENEMIES
             jge .draw_player
             mov eax, ecx
             imul eax, ENEMY_SIZE
@@ -843,7 +853,7 @@ update_enemies:
     xor r12d, r12d ; enemy index = 0
 
     .enemy_loop:
-        cmp r12d, enemy_count
+        cmp r12d, MAX_ENEMIES
         jge .done
 
         ; Calculate candidate position for the enemy
@@ -959,8 +969,8 @@ update_enemies:
             jge .enemy_bottom_boundary
             mov dword [r13 + 4], 0
         .enemy_bottom_boundary:
-            mov eax, WINDOW_HEIGHT
-            sub eax, [r13 + 12] ; WINDOW_HEIGHT - enemy.h
+            mov eax, GAME_HEIGHT
+            sub eax, [r13 + 12] ; GAME_HEIGHT - enemy.h
             cmp [r13 + 4], eax
             jle .next_enemy
             mov [r13 + 4], eax
@@ -1023,7 +1033,7 @@ check_player_enemy_collision:
 
     .enemy_loop:
         mov ecx, [rel enemy_index]
-        cmp ecx, enemy_count
+        cmp ecx, MAX_ENEMIES
         jge .no_collision
 
         mov eax, ecx
@@ -1311,7 +1321,7 @@ projectile_hits_enemy:
 
     .enemy_loop:
         mov ecx, [rel enemy_index]
-        cmp ecx, enemy_count
+        cmp ecx, MAX_ENEMIES
         jge .no_collision
 
         mov eax, ecx
@@ -1449,18 +1459,32 @@ reset_game:
     mov dword [rel game_state], GAME_PLAYING
 
     ; Reset Enemies
-    mov dword [rel enemies + 0], 100
-    mov dword [rel enemies + 4], 100
-    mov dword [rel enemies + 20], 1
-    mov dword [rel enemies + 24], ENEMY_HEALTH
-    mov dword [rel enemies + ENEMY_SIZE + 0], 650
-    mov dword [rel enemies + ENEMY_SIZE + 4], 100
-    mov dword [rel enemies + ENEMY_SIZE + 20], 1
-    mov dword [rel enemies + ENEMY_SIZE + 24], ENEMY_HEALTH
-    mov dword [rel enemies + ENEMY_SIZE * 2 + 0], 400
-    mov dword [rel enemies + ENEMY_SIZE * 2 + 4], 500
-    mov dword [rel enemies + ENEMY_SIZE * 2 + 20], 1
-    mov dword [rel enemies + ENEMY_SIZE * 2 + 24], ENEMY_HEALTH
+    mov dword [rel enemy_index], 0
+    .enemy_loop:
+        mov ecx, [rel enemy_index]
+        cmp ecx, MAX_ENEMIES
+        jge .done_enemies
+        mov eax, ecx
+        imul eax, ENEMY_SIZE
+        lea rdi, [rel enemies]
+        add rdi, rax
+        mov dword [rdi + 20], 0 ; enemy.alive = 0
+        mov dword [rdi + 24], 0 ; enemy.health = 0
+        inc dword [rel enemy_index]
+        jmp .enemy_loop
+
+    .done_enemies:
+        mov edi, 100
+        mov esi, 100
+        call spawn_enemy
+
+        mov edi, 650
+        mov esi, 100
+        call spawn_enemy
+
+        mov edi, 400
+        mov esi, 500
+        call spawn_enemy
 
     ; Reset Projectiles
     mov dword [rel projectile_index], 0
@@ -1476,6 +1500,54 @@ reset_game:
         jmp .projectile_loop
 
     .done_projectiles:
+        ret
+
+; ! Function: spawn_enemy
+; Spawns a new enemy at the specified position.
+; Args:
+;   rdi: x position
+;   rsi: y position
+; Returns:
+;   eax: 1 if enemy spawned successfully, 0 if no available slot
+spawn_enemy:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+    mov [rbp - 4], edi
+    mov [rbp - 8], esi
+    mov dword [rel enemy_index], 0 ; enemy index = 0
+
+    .loop:
+        mov ecx, [rel enemy_index]
+        cmp ecx, MAX_ENEMIES
+        jge .no_slot
+
+        mov eax, ecx
+        imul eax, ENEMY_SIZE
+        lea rdx, [rel enemies]
+        add rdx, rax
+        cmp dword [rdx + 20], 0 ; check if enemy is alive
+        jne .next
+
+        mov eax, [rbp - 4]
+        mov [rdx + 0], eax ; enemy.x
+        mov eax, [rbp - 8]
+        mov [rdx + 4], eax ; enemy.y
+        mov dword [rdx + 8], ENEMY_WIDTH ; enemy.w
+        mov dword [rdx + 12], ENEMY_HEIGHT ; enemy.h
+        mov dword [rdx + 20], 1 ; enemy.alive
+        mov dword [rdx + 24], ENEMY_HEALTH ; enemy.health
+        mov eax, 1 ; enemy spawned successfully
+        jmp .done
+    
+    .next:
+        inc dword [rel enemy_index]
+        jmp .loop
+    .no_slot:
+        xor eax, eax ; no available slot
+    .done:
+        mov rsp, rbp
+        pop rbp
         ret
 
 ; ! Function: draw_char
