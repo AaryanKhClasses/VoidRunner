@@ -94,9 +94,6 @@ section .data
     fmt_debug db "[DEBUG] %s", 10, 0
     fmt_debug_int db "[DEBUG] %s: %d", 10, 0
     fmt_debug_hex db "[DEBUG] %s: 0x%08x", 10, 0
-    msg_game_started db "Game started", 0
-    msg_game_over db "Game Over!", 0
-    msg_player_health db "Player Health", 0
     msg_temp db "Temp Debug", 0
 
     ; ! Wall Struct:
@@ -128,6 +125,21 @@ section .data
     ENEMY_HEALTHBAR_HEIGHT equ 5
     ENEMY_HEALTHBAR_OFFSET equ 10
     MAX_ENEMIES equ 32
+    WAVE_INITIAL_ENEMIES equ 3
+    WAVE_ENEMY_INCREMENT equ 2
+    WAVE_MAX_ENEMIES equ 10
+
+    ; * Temp:
+    WAVE_SPAWN_POINTS equ 8
+    wave_spawn_positions:
+        dd 100, 100
+        dd 650, 100
+        dd 400, 500
+        dd 800, 450
+        dd 200, 450
+        dd 700, 400
+        dd 300, 200
+        dd 900, 500
 
     healthbar_rect:
         dd 0, 0, 0, ENEMY_HEALTHBAR_HEIGHT ; x, y, w, h
@@ -260,6 +272,11 @@ section .bss
     delta_time resd 1
     movement_delta resd 1
 
+    current_wave resd 1
+    enemies_to_spawn resd 1
+    enemies_remaining resd 1
+    wave_spawn_index resd 1
+
 section .text
 main:
     push rbp
@@ -314,20 +331,8 @@ main:
     jz .destroy_window
     mov [rbp - 16], rax ; store renderer pointer
 
-    ; Spawn Initial Enemies
-    mov edi, 100
-    mov esi, 100
-    call spawn_enemy
-
-    mov edi, 650
-    mov esi, 100
-    call spawn_enemy
-
-    mov edi, 400
-    mov esi, 500
-    call spawn_enemy
-
-    LOG msg_game_started
+    mov dword [rel current_wave], 1
+    call start_wave
 
     .game_loop:
 
@@ -531,6 +536,12 @@ main:
         .update_enemies:
             call update_enemies
             call handle_player_damage
+
+            cmp dword [rel enemies_remaining], 0
+            jne .render
+
+            inc dword [rel current_wave]
+            call start_wave
             jmp .render
 
     .render:
@@ -1094,13 +1105,10 @@ handle_player_damage:
         sub dword [rel player_health], PLAYER_DAMAGE
         mov dword [rel player_damage_cooldown], DAMAGE_COOLDOWN
 
-        LOG_INT msg_player_health, [rel player_health]
-
         cmp dword [rel player_health], 0
         jg .done
         mov dword [rel player_health], 0
         mov dword [rel game_state], GAME_OVER
-        LOG msg_game_over
 
     .done:
         ret
@@ -1362,6 +1370,7 @@ projectile_hits_enemy:
         jg .enemy_survived
         mov dword [rdx + 20], 0 ; enemy.alive = 0
         mov dword [rdx + 24], 0 ; enemy.health = 0
+        dec dword [rel enemies_remaining]
         add dword [rel score], ENEMY_SCORE
 
         .enemy_survived:
@@ -1457,6 +1466,9 @@ reset_game:
     mov dword [rel player_damage_cooldown], 0
     mov dword [rel score], 0
     mov dword [rel game_state], GAME_PLAYING
+    mov dword [rel current_wave], 1
+    mov dword [rel enemies_to_spawn], 0
+    mov dword [rel enemies_remaining], 0
 
     ; Reset Enemies
     mov dword [rel enemy_index], 0
@@ -1474,17 +1486,7 @@ reset_game:
         jmp .enemy_loop
 
     .done_enemies:
-        mov edi, 100
-        mov esi, 100
-        call spawn_enemy
-
-        mov edi, 650
-        mov esi, 100
-        call spawn_enemy
-
-        mov edi, 400
-        mov esi, 500
-        call spawn_enemy
+        call start_wave
 
     ; Reset Projectiles
     mov dword [rel projectile_index], 0
@@ -1545,6 +1547,56 @@ spawn_enemy:
         jmp .loop
     .no_slot:
         xor eax, eax ; no available slot
+    .done:
+        mov rsp, rbp
+        pop rbp
+        ret
+
+; ! Function: start_wave
+; Starts a new wave of enemies.
+start_wave:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+
+    mov eax, [rel current_wave]
+    dec eax
+    imul eax, WAVE_ENEMY_INCREMENT
+    add eax, WAVE_INITIAL_ENEMIES
+
+    cmp eax, WAVE_MAX_ENEMIES
+    jle .count_ready
+    mov eax, WAVE_MAX_ENEMIES
+
+    .count_ready:
+        mov [rel enemies_to_spawn], eax
+        mov dword [rel enemies_remaining], 0
+        mov dword [rel wave_spawn_index], 0
+
+    .spawn_loop:
+        cmp dword [rel enemies_to_spawn], 0
+        jle .done
+
+        mov eax, [rel wave_spawn_index]
+        xor edx, edx
+        mov ecx, WAVE_SPAWN_POINTS
+        div ecx
+        mov eax, edx
+        imul eax, 8
+        lea rdx, [rel wave_spawn_positions]
+        add rdx, rax
+
+        mov edi, [rdx + 0] ; spawn_x
+        mov esi, [rdx + 4] ; spawn_y
+        call spawn_enemy
+        test eax, eax
+        jz .done
+
+        dec dword [rel enemies_to_spawn]
+        inc dword [rel enemies_remaining]
+        inc dword [rel wave_spawn_index]
+        jmp .spawn_loop
+
     .done:
         mov rsp, rbp
         pop rbp
