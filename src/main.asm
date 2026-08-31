@@ -153,6 +153,8 @@ section .data
     ; ! Game State
     GAME_PLAYING equ 1
     GAME_OVER equ 0
+    GAME_WAVE_TRANSITION equ 2
+    WAVE_TRANSITION_TIME equ 2000 ; milliseconds
 
     ; ! Projectiles Struct:
     ; +0    x
@@ -181,6 +183,7 @@ section .data
 
     text_game_over db "GAME OVER", 0
     text_restart db "PRESS R TO RESTART", 0
+    text_wave db "WAVE", 0
 
     font_pixel_rect:
         dd 0, 0, FONT_SCALE, FONT_SCALE ; x, y, w, h
@@ -232,6 +235,9 @@ section .data
     GAME_OVER_TITLE_Y equ 220
     GAME_OVER_SCORE_Y equ 300
     GAME_OVER_RESTART_Y equ 400
+    WAVE_HUD_X equ WINDOW_WIDTH - HUD_PADDING - 100
+    WAVE_HUD_Y equ WINDOW_HEIGHT - HUD_HEIGHT + HUD_PADDING
+    SCORE_HUD_Y equ WINDOW_HEIGHT - HUD_HEIGHT + 60
     SCORE_WIDTH equ (SCORE_DIGITS * (FONT_WIDTH * FONT_SCALE + FONT_SPACING)) - FONT_SPACING
 
 section .bss
@@ -276,6 +282,7 @@ section .bss
     enemies_to_spawn resd 1
     enemies_remaining resd 1
     wave_spawn_index resd 1
+    wave_transition_start resq 1
 
 section .text
 main:
@@ -533,6 +540,9 @@ main:
             .fire_cooldown_done:
                 call update_projectiles
 
+            cmp dword [rel game_state], GAME_WAVE_TRANSITION
+            je .wave_transition
+
         .update_enemies:
             call update_enemies
             call handle_player_damage
@@ -540,9 +550,17 @@ main:
             cmp dword [rel enemies_remaining], 0
             jne .render
 
-            inc dword [rel current_wave]
-            call start_wave
+            cmp dword [rel game_state], GAME_WAVE_TRANSITION
+            je .render
+
+            mov dword [rel game_state], GAME_WAVE_TRANSITION
+            call SDL_GetTicks
+            mov [rel wave_transition_start], rax
             jmp .render
+
+    .wave_transition:
+        call update_wave_transition
+        jmp .render
 
     .render:
         ; Clear Screen
@@ -1146,7 +1164,7 @@ draw_hud:
     call SDL_SetRenderDrawColor
 
     mov dword [rbp - 32], HUD_PADDING ; x
-    mov eax, WINDOW_HEIGHT - HUD_HEIGHT + HUD_PADDING ; y
+    mov eax, SCORE_HUD_Y ; y
     mov [rbp - 28], eax
     mov dword [rbp - 24], HEALTH_BAR_WIDTH ; w
     mov dword [rbp - 20], HEALTH_BAR_HEIGHT ; h
@@ -1174,6 +1192,19 @@ draw_hud:
     lea rsi, [rbp - 32]
     call SDL_RenderFillRect
 
+    ; Draw Wave Number
+    mov rdi, [rbp - 8]
+    lea rsi, [rel text_wave]
+    mov edx, WAVE_HUD_X
+    mov ecx, WAVE_HUD_Y
+    call draw_text
+
+    mov rdi, [rbp - 8]
+    mov esi, [rel current_wave]
+    mov edx, WAVE_HUD_X + 72
+    mov ecx, WAVE_HUD_Y
+    call draw_char
+
     .draw_score:
         mov rdi, [rbp - 8]
         mov esi, 255
@@ -1184,8 +1215,8 @@ draw_hud:
 
         mov rdi, [rbp - 8]
         mov esi, [rel score]
-        mov edx, WINDOW_WIDTH - HUD_PADDING - 100
-        mov ecx, WINDOW_HEIGHT - HUD_HEIGHT + HUD_PADDING
+        mov edx, WAVE_HUD_X
+        mov ecx, SCORE_HUD_Y
         call draw_number
 
     .done:
@@ -1373,6 +1404,13 @@ projectile_hits_enemy:
         dec dword [rel enemies_remaining]
         add dword [rel score], ENEMY_SCORE
 
+        cmp dword [rel enemies_remaining], 0
+        jne .enemy_survived
+
+        mov dword [rel game_state], GAME_WAVE_TRANSITION
+        call SDL_GetTicks
+        mov [rel wave_transition_start], rax
+
         .enemy_survived:
             mov eax, 1 ; collision detected
             ret
@@ -1469,6 +1507,7 @@ reset_game:
     mov dword [rel current_wave], 1
     mov dword [rel enemies_to_spawn], 0
     mov dword [rel enemies_remaining], 0
+    mov qword [rel wave_transition_start], 0
 
     ; Reset Enemies
     mov dword [rel enemy_index], 0
@@ -1596,6 +1635,27 @@ start_wave:
         inc dword [rel enemies_remaining]
         inc dword [rel wave_spawn_index]
         jmp .spawn_loop
+
+    .done:
+        mov rsp, rbp
+        pop rbp
+        ret
+
+; ! Function: update_wave_transition
+; Updates the wave transition timer and starts a new wave if the timer has elapsed.
+update_wave_transition:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 16
+
+    call SDL_GetTicks
+    sub rax, [rel wave_transition_start]
+    cmp rax, WAVE_TRANSITION_TIME
+    jb .done
+
+    inc dword [rel current_wave]
+    mov dword [rel game_state], GAME_PLAYING
+    call start_wave
 
     .done:
         mov rsp, rbp
